@@ -163,7 +163,33 @@ function parseCSVLine(line) {
 }
 
 /**
- * Converts CSV to JSON (streaming so we don’t explode memory)
+ * Downloads CSV from Google Drive with confirmation token support
+ */
+async function downloadCSV(url, dest) {
+  console.log("📦 Downloading CSV from Google Drive...");
+
+  let res = await fetch(url);
+  let text = await res.text();
+
+  // Detect confirmation token (Google Drive anti-bot response)
+  const match = text.match(/confirm=([0-9A-Za-z_]+)/);
+
+  if (match) {
+    const confirmURL = `${url}&confirm=${match[1]}`;
+    console.log("⚠ Google blocked direct download — retrying with token...");
+    res = await fetch(confirmURL);
+  } else {
+    res = await fetch(url);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+
+  fs.writeFileSync(dest, buffer);
+  console.log(`✔ CSV downloaded (${buffer.length.toLocaleString()} bytes)`);
+}
+
+/**
+ * Converts CSV to JSON without loading file into memory
  */
 async function csvToJson(csvFilePath, jsonOutputPath) {
   return new Promise((resolve, reject) => {
@@ -203,7 +229,7 @@ async function csvToJson(csvFilePath, jsonOutputPath) {
       isFirstRecord = false;
 
       lineCount++;
-      if (lineCount % 10000 === 0) console.log(`  Processed ${lineCount} records...`);
+      if (lineCount % 10000 === 0) console.log(`  Processed ${lineCount.toLocaleString()} records...`);
     });
 
     rl.on('close', () => {
@@ -211,7 +237,7 @@ async function csvToJson(csvFilePath, jsonOutputPath) {
       writeStream.end();
 
       writeStream.on('finish', () => {
-        console.log(`✓ Converted ${lineCount} records → ${jsonOutputPath}`);
+        console.log(`✔ JSON created with ${lineCount.toLocaleString()} records`);
         resolve(lineCount);
       });
     });
@@ -222,67 +248,38 @@ async function csvToJson(csvFilePath, jsonOutputPath) {
 }
 
 /**
- * Ensures dataset exists (download if missing, convert if needed)
+ * Ensures dataset exists and is processed
  */
 async function ensureDataset() {
   const dataDir = path.join(process.cwd(), 'data');
   const csvPath = path.join(dataDir, 'sales.csv');
   const jsonPath = path.join(dataDir, 'sales.json');
 
-  // Create folder if missing
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir);
-  }
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
-  // Download CSV if missing
+  // Download if missing
   if (!fs.existsSync(csvPath)) {
-    console.log('📦 CSV missing → downloading from Google Drive...');
-    if (!process.env.DATA_URL) throw new Error('DATA_URL environment variable missing');
-
-    async function downloadCSV(url, dest) {
-  console.log("📦 Fetching CSV from Google Drive...");
-  
-  let res = await fetch(url);
-  let text = await res.text();
-
-  // Detect Google Drive confirmation page
-  const tokenMatch = text.match(/confirm=([0-9A-Za-z_]+)/);
-
-  if (tokenMatch) {
-    const confirmURL = `${url}&confirm=${tokenMatch[1]}`;
-    console.log("⚠ Google blocked download — retrying with confirmation token...");
-    res = await fetch(confirmURL);
-  } else {
-    // Reset fetch to buffer mode if it's already raw
-    res = await fetch(url);
+    if (!process.env.DATA_URL) throw new Error("DATA_URL missing in environment variables");
+    await downloadCSV(process.env.DATA_URL, csvPath);
   }
 
-  const buffer = Buffer.from(await res.arrayBuffer());
-  fs.writeFileSync(dest, buffer);
-
-  console.log(`CSV downloaded (${buffer.length} bytes)`);
-}
-
+  // Convert if JSON missing
+  if (!fs.existsSync(jsonPath)) {
+    console.log("⚙ Converting CSV → JSON...");
+    await csvToJson(csvPath, jsonPath);
   }
-
-  // Convert CSV → JSON if missing
-  // Download CSV if missing
-if (!fs.existsSync(csvPath)) {
-  if (!process.env.DATA_URL) throw new Error("DATA_URL environment variable missing");
-  await downloadCSV(process.env.DATA_URL, csvPath);
-}
-
 
   return jsonPath;
 }
 
 /**
- * Load final JSON data
+ * Load JSON into memory
  */
 async function loadSalesData() {
   const jsonPath = await ensureDataset();
+  console.log("📄 Loading JSON data...");
   const raw = fs.readFileSync(jsonPath, 'utf-8');
   return JSON.parse(raw);
 }
 
-module.exports = { loadSalesData, csvToJson };
+module.exports = { loadSalesData };
