@@ -239,18 +239,39 @@ async function ensureDataset() {
     console.log('📦 CSV missing → downloading from Google Drive...');
     if (!process.env.DATA_URL) throw new Error('DATA_URL environment variable missing');
 
-    const res = await fetch(process.env.DATA_URL);
-    const buffer = await res.arrayBuffer();
-    fs.writeFileSync(csvPath, Buffer.from(buffer));
-    console.log('✔ CSV downloaded successfully');
+    async function downloadCSV(url, dest) {
+  console.log("📦 Fetching CSV from Google Drive...");
+  
+  let res = await fetch(url);
+  let text = await res.text();
+
+  // Detect Google Drive confirmation page
+  const tokenMatch = text.match(/confirm=([0-9A-Za-z_]+)/);
+
+  if (tokenMatch) {
+    const confirmURL = `${url}&confirm=${tokenMatch[1]}`;
+    console.log("⚠ Google blocked download — retrying with confirmation token...");
+    res = await fetch(confirmURL);
+  } else {
+    // Reset fetch to buffer mode if it's already raw
+    res = await fetch(url);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  fs.writeFileSync(dest, buffer);
+
+  console.log(`CSV downloaded (${buffer.length} bytes)`);
+}
+
   }
 
   // Convert CSV → JSON if missing
-  if (!fs.existsSync(jsonPath)) {
-    console.log('⚙️ Converting CSV to JSON...');
-    await csvToJson(csvPath, jsonPath);
-    console.log('✔ JSON created successfully');
-  }
+  // Download CSV if missing
+if (!fs.existsSync(csvPath)) {
+  if (!process.env.DATA_URL) throw new Error("DATA_URL environment variable missing");
+  await downloadCSV(process.env.DATA_URL, csvPath);
+}
+
 
   return jsonPath;
 }
