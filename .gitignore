@@ -27,3 +27,5 @@ backend/data/*.json
 *.njsproj
 *.sln
 *.sw?
+backend/data/*.csv
+backend/data/*.json
